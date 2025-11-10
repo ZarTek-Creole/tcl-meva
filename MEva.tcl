@@ -1,11 +1,32 @@
+################################################################################
+# MEva.tcl - Mini-Eva (UWorld-like pour UnrealIRCD)
+#
+# Description:
+#   Script TCL pour Eggdrop permettant la gestion de modération IRC via
+#   des commandes simples. Fonctionne avec UnrealIRCD sans nécessiter de
+#   connexion serveur directe, uniquement des droits IRCops.
+#
+# Auteurs: ZarTek-Creole & Tibs
+# Version: 1.0.0
+# Licence: Apache License 2.0
+#
+# Prérequis:
+#   - Eggdrop configuré et fonctionnel
+#   - UnrealIRCD avec droits IRCops pour le bot
+#   - TCL 8.6
+################################################################################
+
 if { [info commands ::MEva::uninstall] eq "::MEva::uninstall" } { ::MEva::uninstall }
 
 
 namespace eval MEva {
+	variable SCRIPT
+	variable CONF
+	variable CMD_LIST
 
 	array set SCRIPT {
 		"name"				"MEva"
-		"version"			"0.0.1"
+		"version"			"1.0.0"
 		"auteur"			"ZarTek-Creole & Tibs"
 	}
 
@@ -38,22 +59,55 @@ namespace eval MEva {
     if { [string match -nocase *account-notify* [cap ls]] } { cap req account-notify; }
 
 }
+################################################################################
+# Procédure de désinstallation
+# Nettoie tous les bindings et supprime le namespace
+################################################################################
 proc ::MEva::uninstall {args} {
-	putlog [format "Désallocation des ressources de \002%s\002..." ${::MEva::SCRIPT(name)}];
+	variable SCRIPT
+	putlog [format "Désallocation des ressources de \002%s\002..." ${SCRIPT(name)}];
 	foreach binding [lsearch -inline -all -regexp [binds *[set ns [string range [namespace current] 2 end]]*] " \{?(::)?${ns}"] {
 		unbind [lindex ${binding} 0] [lindex ${binding} 1] [lindex ${binding} 2] [lindex ${binding} 4];
 	}
 	namespace delete ::MEva
 }
+
+################################################################################
+# Échappe les caractères spéciaux dans une chaîne pour utilisation sécurisée
+# Paramètres: TEXT - texte à échapper
+# Retourne: texte échappé
+################################################################################
 proc ::MEva::string_escape { TEXT } {
 	return [string map {"\"" "\\\"" "\\" "\\\\" "\[" "\\\[" "\]" "\\\]" "\}" "\\\}" "\{" "\\\{"} ${TEXT}] 
 }
+
+################################################################################
+# Crée les bindings pour une commande (public, privé, DCC)
+# Paramètres: CMD_NAME - nom de la commande
+################################################################################
 proc ::MEva::proc_create { CMD_NAME } {
-	bind pub -|- ${::MEva::CONF(publicprefix)}${CMD_NAME} "::MEva::proc_main ${CMD_NAME}"
+	variable CONF
+	bind pub -|- ${CONF(publicprefix)}${CMD_NAME} "::MEva::proc_main ${CMD_NAME}"
 	bind msg -|- ${CMD_NAME} "::MEva::proc_main ${CMD_NAME}"
 	bind dcc -|- ${CMD_NAME} "::MEva::proc_main ${CMD_NAME}"
 }
-proc ::MEva::msg MSG { eval [subst [string_escape ${::MEva::SEND}]]; }
+
+################################################################################
+# Envoie un message selon le contexte (canal, privé, DCC)
+# Paramètres: MSG - message à envoyer
+################################################################################
+proc ::MEva::msg MSG {
+	variable SEND
+	eval [subst [::MEva::string_escape ${SEND}]]; 
+}
+
+################################################################################
+# Retourne la forme singulière ou plurielle selon la valeur
+# Paramètres: value - valeur numérique
+#            singular - forme singulière
+#            plural - forme plurielle
+# Retourne: forme appropriée
+################################################################################
 proc ::MEva::plural { value singular plural } {
 	if { (${value} >= 2) || (${value} <= -2) } {
 		return ${plural};
@@ -61,6 +115,12 @@ proc ::MEva::plural { value singular plural } {
 		return ${singular};
 	}
 }
+################################################################################
+# Formate une durée en français (jours, heures, minutes, secondes)
+# Paramètres: duration - durée en millisecondes
+#            short - format court (1) ou long (0)
+# Retourne: durée formatée en français
+################################################################################
 proc ::MEva::duration_fr {duration {short 0}} {
 	set duration        [::tcl::string::trimleft ${duration} 0];
 	set milliseconds    [::tcl::string::range ${duration} end-2 end];
@@ -137,48 +197,63 @@ proc ::MEva::duration_fr {duration {short 0}} {
 		return [join ${output} ""];
 	}
 }
+################################################################################
+# Procédure principale de traitement des commandes
+# Détecte automatiquement le contexte (public, privé, DCC) et route vers
+# la commande appropriée après vérification des permissions
+# Paramètres: CMD_NAME - nom de la commande
+#            args - arguments selon le contexte
+################################################################################
 proc ::MEva::proc_main { CMD_NAME args } {
+	variable CONF
+	variable SCRIPT
+	variable SEND
+	
 	switch -- [llength ${args}] {
 		5 {
-			set bindprefix 		"${::MEva::CONF(publicprefix)}${::MEva::CONF(prefix)}"
+			set bindprefix 		"${CONF(publicprefix)}${CONF(prefix)}"
 			lassign ${args} 	nick host hand chan arg
-			set ::MEva::SEND	"puthelp \"PRIVMSG ${chan} :\${MSG}\""
+			set SEND	"puthelp \"PRIVMSG ${chan} :\${MSG}\""
 			set source_mode 	"public"
 		}
 		4 {
-			set bindprefix		"${::MEva::CONF(prefix)}"
+			set bindprefix		"${CONF(prefix)}"
 			lassign ${args} 	nick host hand arg
-			set ::MEva::SEND	"puthelp \"PRIVMSG ${nick} :\${MSG}\""
+			set SEND	"puthelp \"PRIVMSG ${nick} :\${MSG}\""
 			set source_mode 	"private"
 		}
 		3 {
-			set bindprefix		".${::MEva::CONF(prefix)}"
+			set bindprefix		".${CONF(prefix)}"
 			lassign ${args} 	nick idx arg
-			set ::MEva::SEND	"putdcc ${idx} [list \${MSG}]"
+			set SEND	"putdcc ${idx} [list \${MSG}]"
 			set source_mode 	"party"
 		}
 	}
-	if { ![matchattr [nick2hand ${nick}]  ${::MEva::CONF(mode)}] } {
-		set MSG_ERROR 		[format "Vous ne disposez pas du drapeau Eggdrop '%s' nécessaire pour la commande %s." ${::MEva::CONF(mode)} ${CMD_NAME}]
+	
+	# Vérification des permissions Eggdrop
+	if { ![matchattr [nick2hand ${nick}] ${CONF(mode)}] } {
+		set MSG_ERROR 		[format "Vous ne disposez pas du drapeau Eggdrop '%s' nécessaire pour la commande %s." ${CONF(mode)} ${CMD_NAME}]
 		::MEva::msg 		${MSG_ERROR}
 		return -code error 	${MSG_ERROR}
 	}
 	switch -nocase ${CMD_NAME} \
-		${::MEva::CONF(prefix)}help		{
-			::MEva::msg [format "\0030,3\002 Aide d'UWorld-NG (%s) version %s by %s." ${::MEva::SCRIPT(name)} ${::MEva::SCRIPT(version)} ${::MEva::SCRIPT(auteur)}]
+		${CONF(prefix)}help		{
+			::MEva::msg [format "\0030,3\002 Aide d'UWorld-NG (%s) version %s by %s." ${SCRIPT(name)} ${SCRIPT(version)} ${SCRIPT(auteur)}]
 			::MEva::msg "\002${bindprefix}Op\002      <#salon> <pseudo>             \002->\002 Met le drapeau @operateur à <pseudo> sur le salon <#salon>."
 			::MEva::msg "\002${bindprefix}DeOp\002    <#salon> <pseudo>             \002->\002 Retire le drapeau @operateur à <pseudo> sur le salon <#salon>."
 			::MEva::msg "\002${bindprefix}Voice\002   <#salon> <pseudo>             \002->\002 Met le drapeau +voice sur le salon <#salon> à <pseudo>."
 			::MEva::msg "\002${bindprefix}DeVoice\002 <#salon> <pseudo>             \002->\002 Retire le drapeau +voice sur le salon <#salon> à <pseudo>."
 			::MEva::msg "\002${bindprefix}DeMode\002  <#salon> <pseudo>             \002->\002 Retire tous les drapeaux à <pseudo> sur le salon <#salon>."
 			::MEva::msg "\002${bindprefix}Kick\002    <#salon> <pseudo> \[raison\]    \002->\002 Ejecter <pseudo> du salon <#salon> pour motif \[raison\]."
+			::MEva::msg "\002${bindprefix}KB\002      <#salon> <pseudo> \[raison\]    \002->\002 Ejecter et bannir <pseudo> du salon <#salon> pour motif \[raison\]."
+			::MEva::msg "\002${bindprefix}KickBan\002 <#salon> <pseudo> \[raison\]    \002->\002 Ejecter et bannir <pseudo> du salon <#salon> pour motif \[raison\]."
 			::MEva::msg "\002${bindprefix}Kill\002    <pseudo> \[raison\]             \002->\002 Ejecter <pseudo> du serveur avec comme motif \[raison\]."
-			::MEva::msg "\002${bindprefix}GLine\002   <pseudo> \[raison\]             \002->\002 Ejecter <pseudo> du serveur avec comme motif \[raison\]."
+			::MEva::msg "\002${bindprefix}GLine\002   <pseudo> \[raison\]             \002->\002 Bannir globalement <pseudo> du réseau avec comme motif \[raison\]."
 			::MEva::msg "\002${bindprefix}BotNick\002 <Nouveau Pseudo>              \002->\002 Changer le nom du robot en <Nouveau Pseudo>."
 			return -code ok
 		} \
-		${::MEva::CONF(prefix)}BotNick	{
-			if { $arg == "" } {
+		${CONF(prefix)}BotNick	{
+			if { ${arg} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
@@ -189,23 +264,23 @@ proc ::MEva::proc_main { CMD_NAME args } {
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}Op		{
+		${CONF(prefix)}Op		{
 			set channel	[lindex ${arg} 0]
 			set who		[lindex ${arg} 1]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#chan> <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
 			}
 			putserv "MODE ${channel} +o ${who}"
-			set MSG				[format "\002Félicitation:\002 %s est maintenant @opérateur sur %s." ${nick} ${channel}]
+			set MSG				[format "\002Félicitation:\002 %s est maintenant @opérateur sur %s." ${who} ${channel}]
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}DeOp		{
+		${CONF(prefix)}DeOp		{
 			set channel	[lindex ${arg} 0]
 			set who		[lindex ${arg} 1]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#chan> <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
@@ -215,23 +290,23 @@ proc ::MEva::proc_main { CMD_NAME args } {
 			::MEva::msg 			${MSG}
 			return -code ok 		${MSG}
 		} \
-		${::MEva::CONF(prefix)}Voice	{
+		${CONF(prefix)}Voice	{
 			set channel	[lindex ${arg} 0]
 			set who		[lindex ${arg} 1]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#chan> <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
 			}
-			putserv "MODE ${chan} +v ${nick}"
+			putserv "MODE ${channel} +v ${who}"
 			set MSG					[format "\002Félicitation:\002 %s est maintenant +voice sur %s." ${who} ${channel}]
 			::MEva::msg 			${MSG}
 			return -code ok 		${MSG}
 		} \
-		${::MEva::CONF(prefix)}DeVoice	{
+		${CONF(prefix)}DeVoice	{
 			set channel	[lindex ${arg} 0]
 			set who		[lindex ${arg} 1]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#chan> <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
@@ -241,10 +316,10 @@ proc ::MEva::proc_main { CMD_NAME args } {
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}DeMode	{
+		${CONF(prefix)}DeMode	{
 			set channel	[lindex ${arg} 0]
 			set who		[lindex ${arg} 1]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#chan> <nick>" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
@@ -254,78 +329,98 @@ proc ::MEva::proc_main { CMD_NAME args } {
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}Kill	{
+		${CONF(prefix)}Kill	{
 			set who		[lindex ${arg} 0]
 			set raison	[lrange ${arg} 1 end]
-			if { ${nick} == "" } {
+			if { ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <pseudo> \[raison\]" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
 			}
 			if { ${raison} == "" } {
-				set raison ${::MEva::CONF(raison_default)};
+				set raison ${CONF(raison_default)};
 			}
-			if { ${::MEva::CONF(action_signed)} } {
-				append raison [format ${::MEva::CONF(signed_msg)} ${nick}]
+			if { ${CONF(action_signed)} } {
+				append raison [format ${CONF(signed_msg)} ${nick}]
 			}
-			putserv "kill ${who} ${raison}"
-			set MSG				[format "\002Félicitation:\002 Vous avez éjécté '%s' du serveur pour le motif: '%s'" ${nick} ${raison}]
+			putserv "KILL ${who} :${raison}"
+			set MSG				[format "\002Félicitation:\002 Vous avez éjécté '%s' du serveur pour le motif: '%s'" ${who} ${raison}]
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}kick	{
+		${CONF(prefix)}GLine	{
+			set who		[lindex ${arg} 0]
+			set raison	[lrange ${arg} 1 end]
+			if { ${who} == "" } {
+				set MSG_ERROR 		[format "\002Usage:\002 %s <pseudo> \[raison\]" ${CMD_NAME}]
+				::MEva::msg 		${MSG_ERROR}
+				return -code error 	${MSG_ERROR}
+			}
+			if { ${raison} == "" } {
+				set raison ${CONF(raison_default)};
+			}
+			if { ${CONF(action_signed)} } {
+				append raison [format ${CONF(signed_msg)} ${nick}]
+			}
+			set GLINE_MASK	"${who}!*@*"
+			putserv "GLINE ${GLINE_MASK} :${raison}"
+			set MSG				[format "\002Félicitation:\002 Vous avez banni globalement '%s' du réseau pour le motif: '%s'" ${who} ${raison}]
+			::MEva::msg 		${MSG}
+			return -code ok 	${MSG}
+		} \
+		${CONF(prefix)}Kick	{
 			set channel		[lindex ${arg} 0]
 			set who			[lindex ${arg} 1]
 			set KICK_RAISON	[lrange ${arg} 2 end]
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#salon> <pseudo> \[raison\]" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
 			}
 			if { ${KICK_RAISON} == "" } {
-				set KICK_RAISON ${::MEva::CONF(raison_default)};
+				set KICK_RAISON ${CONF(raison_default)};
 			}
-			if { ${::MEva::CONF(action_signed)} } {
-				append KICK_RAISON [format ${::MEva::CONF(signed_msg)} ${nick}]
+			if { ${CONF(action_signed)} } {
+				append KICK_RAISON [format ${CONF(signed_msg)} ${nick}]
 			}
-			set KICK_RAISON			"${kick_prefix}${KICK_RAISON}"
-			putserv "kick ${channel} ${who} ${KICK_RAISON}"
+			set KICK_RAISON			"${CONF(kick_prefix)}${KICK_RAISON}"
+			putserv "KICK ${channel} ${who} :${KICK_RAISON}"
 			set MSG				[format "\002Félicitation:\002 Vous avez éjécté '%s' du salon '%s' pour le motif: '%s'" ${who} ${channel} ${KICK_RAISON}]
 			::MEva::msg 		${MSG}
 			return -code ok 	${MSG}
 		} \
-		${::MEva::CONF(prefix)}kb	- \
-		${::MEva::CONF(prefix)}kickban	{
+		${CONF(prefix)}KB	- \
+		${CONF(prefix)}KickBan	{
 			
 			set channel		[lindex ${arg} 0]
 			set who			[lindex ${arg} 1]
 			set KICK_RAISON	[lrange ${arg} 2 end]
 			set BAN_MASK	"${who}!*@*"
 
-			if { ${nick} == "" } {
+			if { ${channel} == "" || ${who} == "" } {
 				set MSG_ERROR 		[format "\002Usage:\002 %s <#salon> <pseudo> \[raison\]" ${CMD_NAME}]
 				::MEva::msg 		${MSG_ERROR}
 				return -code error 	${MSG_ERROR}
 			}
 
 			if { ${KICK_RAISON} == "" } {
-				set KICK_RAISON ${::MEva::CONF(raison_default)};
+				set KICK_RAISON ${CONF(raison_default)};
 			}
 
 			if { 
-				${::MEva::CONF(ban_minutes)} != "" 							&& \
-				${::MEva::CONF(ban_minutes)} >= 1
+				${CONF(ban_minutes)} != "" 							&& \
+				${CONF(ban_minutes)} >= 1
 			} {
-				utimer ${::MEva::CONF(ban_minutes)} [list putquick "MODE ${channel} -b ${BAN_MASK}"]
-				append KICK_RAISON " (Expire le [strftime "%d/%m/%Y à %H:%M:%S" [clock add [clock seconds] ${::MEva::CONF(ban_minutes)} minutes]] dans [::MEva::duration_fr [expr ${::MEva::CONF(ban_minutes)}*60000]])"
+				utimer [expr ${CONF(ban_minutes)} * 60] [list putquick "MODE ${channel} -b ${BAN_MASK}"]
+				append KICK_RAISON " (Expire le [strftime "%d/%m/%Y à %H:%M:%S" [clock add [clock seconds] ${CONF(ban_minutes)} minutes]] dans [::MEva::duration_fr [expr ${CONF(ban_minutes)}*60000]])"
 			}
 
-			if { ${::MEva::CONF(action_signed)} } {
-				append KICK_RAISON [format ${::MEva::CONF(signed_msg)} ${nick}]
+			if { ${CONF(action_signed)} } {
+				append KICK_RAISON [format ${CONF(signed_msg)} ${nick}]
 			}
 
 			putquick "MODE ${channel} +b ${BAN_MASK}"
-			putquick "kick ${channel} ${who} ${KICK_RAISON}"
+			putquick "KICK ${channel} ${who} :${KICK_RAISON}"
 
 			set MSG				[format "\002Félicitation:\002 Vous avez éjecté '%s' du salon '%s' pour le motif: '%s'" ${who} ${channel} ${KICK_RAISON}]
 			::MEva::msg 		${MSG}
@@ -337,27 +432,63 @@ proc ::MEva::proc_main { CMD_NAME args } {
 			return -code error 	${MSG_ERROR}
 		}
 }
-# Use extended-join to perform the first test
-    proc ::MEva::RAWJOIN {from kw text flag} {
-		putlog "tessstt $from ** $kw ** $text ** $flag"
-	}
+################################################################################
+# Gestion des événements JOIN avec extended-join (si disponible)
+# Cette procédure est appelée lorsque extended-join est disponible
+# Paramètres: from - origine du JOIN (nick!user@host)
+#            kw - mot-clé (généralement vide pour JOIN)
+#            text - paramètres additionnels (account, realname si extended-join)
+#            flag - drapeaux additionnels
+# Note: Actuellement non utilisée dans la logique métier, conservée pour compatibilité future
+################################################################################
+proc ::MEva::RAWJOIN {from kw text flag} {
+	# Placeholder pour traitement futur des événements JOIN avec extended-join
+}
+
+################################################################################
+# Gestion des événements JOIN sans extended-join (fallback)
+# Cette procédure est appelée lorsque extended-join n'est pas disponible
+# Paramètres: nick - pseudonyme de l'utilisateur
+#            uhost - user@host
+#            hand - handle Eggdrop (si enregistré)
+#            chan - canal
+# Note: Actuellement non utilisée dans la logique métier, conservée pour compatibilité future
+################################################################################
+proc ::MEva::BINDJOIN {nick uhost hand chan} {
+	# Placeholder pour traitement futur des événements JOIN sans extended-join
+}
+################################################################################
+# Initialisation du script
+# Crée les bindings pour toutes les commandes et active les capacités IRC
+################################################################################
 proc ::MEva::init {} {
-	foreach CMD_NAME ${::MEva::CMD_LIST} { ::MEva::proc_create ${::MEva::CONF(prefix)}${CMD_NAME} }
-    if { 
+	variable CMD_LIST
+	variable CONF
+	variable SCRIPT
+	
+	# Créer les bindings pour toutes les commandes
+	foreach CMD_NAME ${CMD_LIST} { 
+		::MEva::proc_create ${CONF(prefix)}${CMD_NAME} 
+	}
+	
+	# Activer account-notify si disponible
+	if { 
 		![string match *account-notify* [cap enabled]] 			&& \
 		[string match -nocase *account-notify* [cap ls]]
-	 } {
-		 cap req account-notify
+	} {
+		cap req account-notify
 	}
-	    if { [string match -nocase *extended-join* [cap ls]] } {
-            if { ![string match *extended-join* [cap enabled]] } {
-                cap req extended-join
-            }
-            bind RAWT - JOIN ::MEva::RAWJOIN
-        } else {
-            bind join - * ::MEva::BINDJOIN
-        }
+	
+	# Gérer extended-join si disponible
+	if { [string match -nocase *extended-join* [cap ls]] } {
+		if { ![string match *extended-join* [cap enabled]] } {
+			cap req extended-join
+		}
+		bind RAWT - JOIN ::MEva::RAWJOIN
+	} else {
+		bind join - * ::MEva::BINDJOIN
+	}
 
-    putlog [format "Chargement de Mini-Eva (%s) version %s by %s" ${::MEva::SCRIPT(name)} ${::MEva::SCRIPT(version)} ${::MEva::SCRIPT(auteur)}]
+	putlog [format "Chargement de Mini-Eva (%s) version %s by %s" ${SCRIPT(name)} ${SCRIPT(version)} ${SCRIPT(auteur)}]
 }
 ::MEva::init
