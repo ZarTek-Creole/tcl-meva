@@ -1,0 +1,33 @@
+---
+project: MEva (Mini-Eva)
+description: Advanced Eggdrop TCL moderation bot for IRC channels with UnrealIRCD support
+keywords:
+  - eggdrop
+  - tcl
+  - irc-moderation
+  - unrealircd
+  - channel-management
+  - network-administration
+topics:
+  - tcl
+  - eggdrop
+  - irc
+  - unrealircd
+  - moderation
+  - bot
+  - irc-bot
+  - channel-management
+  - kick-ban
+  - gline
+  - nfo
+  - network-management
+  - unix
+  - linux
+  - irc-services
+language: TCL 8.6+
+requires:
+  - Eggdrop 1.8.0+
+  - UnrealIRCD 4.0+
+author: ZarTek-Creole & Tibs
+license: Apache 2.0
+repository_url: https://github.com/ZarTek-Creole/tcl-meva
