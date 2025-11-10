@@ -1,5 +1,10 @@
 # MEva (Mini-Eva)
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Language: TCL 8.6+](https://img.shields.io/badge/Language-TCL%208.6%2B-green.svg)](https://www.tcl-lang.org/)
+[![Eggdrop: 1.8.0+](https://img.shields.io/badge/Eggdrop-1.8.0%2B-orange.svg)](https://www.eggheads.org/)
+[![UnrealIRCD: 4.0+](https://img.shields.io/badge/UnrealIRCD-4.0%2B-red.svg)](https://www.unrealircd.org/)
+
 MEva est un script TCL pour Eggdrop qui fournit un système de commandes de modération IRC similaire à UWorld, conçu pour fonctionner avec UnrealIRCD.
 
 ## Table des matières
